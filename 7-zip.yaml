@@ -20,3 +20,12 @@
           7z x -so "$OUT" "${WAR_PROPS_PATH}" | head -20
           echo "--- WAR size: $(du -h "$OUT" | cut -f1) ---"
           echo "DEPLOY_WAR=$OUT" >> "$GITHUB_ENV"
+
+
+
+- name: Ensure 7-Zip is installed
+        run: |
+          if ! command -v 7z >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y p7zip-full
+          fi
+          7z --help | head -3
