@@ -5,3 +5,49 @@
       /tmp/application-properties/other-repo
   env:
     GH_PAT: ${{ secrets.ORG_REPO_PAT }}
+
+
+
+- name: Checkout Application Properties Repository
+  run: |
+    set -euo pipefail
+    git clone --depth 1 --branch main --single-branch \
+      "https://x-access-token:${GH_PAT}@github.com/sampathbankplc/tanzu-base-projects-manifests-dev.git" \
+      "/tmp/application-properties/${{ github.event.repository.name }}"
+    echo "Manifests commit: $(git -C "/tmp/application-properties/${{ github.event.repository.name }}" rev-parse HEAD)"
+    rm -rf "/tmp/application-properties/${{ github.event.repository.name }}/.git"
+  env:
+    GH_PAT: ${{ secrets.COMMON_USER_TOKEN }}
+
+- name: Update Application Properties
+  working-directory: ${{ env.WORKSPACE }}
+  run: |
+    set -euo pipefail
+
+    # Validate source file exists
+    if [ ! -f "/tmp/application-properties/${{ github.event.repository.name }}/${{ github.event.repository.name }}/stg/application-stg.properties" ]; then
+      echo "::error::Source application-stg.properties file not found."
+      exit 1
+    fi
+
+    # Validate target directory exists
+    if [ ! -d "src/main/resources" ]; then
+      echo "::error::Target resources directory does not exist."
+      exit 1
+    fi
+
+    # Copy application properties
+    cp -v "/tmp/application-properties/${{ github.event.repository.name }}/${{ github.event.repository.name }}/stg/application-stg.properties" \
+      src/main/resources/application-stg.properties
+
+    # Validate copy succeeded
+    if [ ! -f "src/main/resources/application-stg.properties" ]; then
+      echo "::error::Failed to copy application-stg.properties file."
+      exit 1
+    fi
+
+    echo "Application properties updated successfully."
+
+- name: Clean up Application Properties
+  if: always()
+  run: rm -rf "/tmp/application-properties/${{ github.event.repository.name }}"
