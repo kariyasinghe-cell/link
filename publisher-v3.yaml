@@ -1,53 +1,52 @@
-- name: Clone to /tmp
-  run: |
-    mkdir -p /tmp/application-properties
-    git clone https://x-access-token:${GH_PAT}@github.com/my-org/other-repo.git \
-      /tmp/application-properties/other-repo
-  env:
-    GH_PAT: ${{ secrets.ORG_REPO_PAT }}
+# syntax=docker/dockerfile:1.7
 
+FROM python:3.12-slim AS base
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-- name: Checkout Application Properties Repository
-  run: |
-    set -euo pipefail
-    git clone --depth 1 --branch main --single-branch \
-      "https://x-access-token:${GH_PAT}@github.com/sampathbankplc/tanzu-base-projects-manifests-dev.git" \
-      "/tmp/application-properties/${{ github.event.repository.name }}"
-    echo "Manifests commit: $(git -C "/tmp/application-properties/${{ github.event.repository.name }}" rev-parse HEAD)"
-    rm -rf "/tmp/application-properties/${{ github.event.repository.name }}/.git"
-  env:
-    GH_PAT: ${{ secrets.COMMON_USER_TOKEN }}
+# Create non-root user and group with specified UIDs/GIDs
+RUN groupadd --system --gid 1003 appgroup \
+ && useradd  --system --uid 1003 --gid appgroup \
+             --home-dir /app --shell /usr/sbin/nologin appuser
 
-- name: Update Application Properties
-  working-directory: ${{ env.WORKSPACE }}
-  run: |
-    set -euo pipefail
+# ---------- build stage ----------
+FROM base AS builder
 
-    # Validate source file exists
-    if [ ! -f "/tmp/application-properties/${{ github.event.repository.name }}/${{ github.event.repository.name }}/stg/application-stg.properties" ]; then
-      echo "::error::Source application-stg.properties file not found."
-      exit 1
-    fi
+# System build deps (remove those you don't need)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      gcc \
+ && rm -rf /var/lib/apt/lists/*
 
-    # Validate target directory exists
-    if [ ! -d "src/main/resources" ]; then
-      echo "::error::Target resources directory does not exist."
-      exit 1
-    fi
+WORKDIR /app
 
-    # Copy application properties
-    cp -v "/tmp/application-properties/${{ github.event.repository.name }}/${{ github.event.repository.name }}/stg/application-stg.properties" \
-      src/main/resources/application-stg.properties
+# Install deps into an isolated prefix so we can copy only what's needed
+COPY requirements.txt .
+RUN pip install --prefix=/install -r requirements.txt
 
-    # Validate copy succeeded
-    if [ ! -f "src/main/resources/application-stg.properties" ]; then
-      echo "::error::Failed to copy application-stg.properties file."
-      exit 1
-    fi
+# ---------- runtime stage ----------
+FROM base AS runtime
 
-    echo "Application properties updated successfully."
+# Copy installed site-packages / entrypoints from builder
+COPY --from=builder /install /usr/local
 
-- name: Clean up Application Properties
-  if: always()
-  run: rm -rf "/tmp/application-properties/${{ github.event.repository.name }}"
+WORKDIR /app
+
+# Copy app code with correct ownership in a single layer
+COPY --chown=appuser:appgroup . /app
+
+USER appuser:appgroup
+
+EXPOSE 8000
+
+# Healthcheck — adjust endpoint/port for your app
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import urllib.request,sys; \
+sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else sys.exit(1)" \
+  || exit 1
+
+# Replace with your actual entrypoint
+CMD ["python", "-m", "app"]
