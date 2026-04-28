@@ -1,3 +1,28 @@
+- name: Extract Python Version from Dockerfile
+        id: extract-python
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          ...
+          if [ ! -f "Dockerfile" ]; then
+            echo "Error: Dockerfile not found in $(pwd)"
+            exit 1
+          fi
+
+          RAW=$(grep -iE '^\s*FROM\s' Dockerfile | grep -E '[ /]python:' | head -1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 build-and-test:
     runs-on: ubuntu-latest
     needs: black-format-check  # runs only if format check passes
