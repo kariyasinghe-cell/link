@@ -1,3 +1,23 @@
+Here are PowerShell equivalents:
+Basic match on python: base image:
+powershellSelect-String -Path Dockerfile -Pattern 'python:([\d.]+)' | ForEach-Object { $_.Matches.Groups[1].Value }
+Match FROM python:... including variants like -slim, -alpine:
+powershellSelect-String -Path Dockerfile -Pattern '^FROM\s+python:([\d.]+(?:-\w+)?)' | ForEach-Object { $_.Matches.Groups[1].Value }
+Just the tag portion (everything after python:):
+powershell(Select-String -Path Dockerfile -Pattern '^FROM\s+python:(.+)$').Matches.Groups[1].Value
+Multi-stage Dockerfile — get all Python base images:
+powershellSelect-String -Path Dockerfile -Pattern '^FROM\s+.*python:\S+' | ForEach-Object { $_.Line }
+Inspect the actual image if base isn't directly python:*:
+powershell$base = (Select-String -Path Dockerfile -Pattern '^FROM\s+(\S+)').Matches.Groups[1].Value
+docker run --rm $base python --version
+One-liner using -match operator (no Select-String):
+powershell(Get-Content Dockerfile) -match '^FROM\s+python:' -replace '^FROM\s+python:', ''
+The Select-String approach is the most idiomatic PowerShell — it's the native equivalent of grep.
+
+
+
+
+
 PY_VERSION=$(echo "$TAG" | sed -E 's/^([0-9]+(\.[0-9]+){0,2}).*/\1/')
 
 
