@@ -1,3 +1,50 @@
+If you want to extract the Python version from a Dockerfile's `FROM` line, here are a few approaches:
+
+**Basic grep:**
+```bash
+grep -oP '(?<=python:)[\d.]+' Dockerfile
+```
+
+**Handle the `FROM` line specifically:**
+```bash
+grep -oP '^FROM\s+python:\K[\d.]+(?:-\w+)?' Dockerfile
+```
+
+This catches things like `3.11`, `3.11.4`, `3.11-slim`, `3.11-alpine`, etc.
+
+**If the base image isn't `python:*` directly (e.g., custom or derived images), inspect the actual image:**
+```bash
+docker run --rm $(grep -oP '^FROM\s+\K\S+' Dockerfile | head -1) python --version
+```
+
+**With awk if you prefer:**
+```bash
+awk '/^FROM/ && /python:/ {split($2, a, ":"); print a[2]}' Dockerfile
+```
+
+**Multi-stage Dockerfiles** — get all Python base images:
+```bash
+grep -E '^FROM\s+.*python:' Dockerfile | awk '{print $2}'
+```
+
+Which scenario are you dealing with — a straight `python:X.Y` base, or something more layered like a custom registry image?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Here are PowerShell equivalents:
 Basic match on python: base image:
 powershellSelect-String -Path Dockerfile -Pattern 'python:([\d.]+)' | ForEach-Object { $_.Matches.Groups[1].Value }
