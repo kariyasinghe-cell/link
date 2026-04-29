@@ -1,3 +1,5 @@
+grep -oP '^FROM\s+python:\K[\d.]+' Dockerfile
+
 If you want to extract the Python version from a Dockerfile's `FROM` line, here are a few approaches:
 
 **Basic grep:**
