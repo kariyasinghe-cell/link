@@ -1,31 +1,20 @@
-- name: Inject properties into WAR (7-Zip, matches manual process)
+- name: Extract Python Version from Dockerfile
+        id: extract-python
+        working-directory: ${{ env.WORKSPACE }}
         run: |
-          set -euo pipefail
-          WAR="artifact/${{ inputs.war_asset_name }}"
-          OUT="artifact/${{ inputs.application }}-${{ inputs.environment }}.war"
-          cp "$WAR" "$OUT"
+          cat /etc/os-release
 
-          # Stage the replacement at the exact internal path 7z expects.
-          # 7z preserves the directory structure relative to where you run it from.
-          STAGE=$(mktemp -d)
-          mkdir -p "$STAGE/$(dirname "${WAR_PROPS_PATH}")"
-          cp "$PROPS_FILE" "$STAGE/${WAR_PROPS_PATH}"
-
-          # `u` = update (replace if exists, add if not) — same as drag-and-drop in 7-Zip GUI
-          # `-tzip` = treat .war as zip (7z would otherwise guess, usually fine, but be explicit)
-          # `-bb1` = verbose so the log shows which file was replaced
-          ( cd "$STAGE" && 7z u -tzip -bb1 "$GITHUB_WORKSPACE/$OUT" "${WAR_PROPS_PATH}" )
-
-          echo "--- Verifying injected properties ---"
-          7z x -so "$OUT" "${WAR_PROPS_PATH}" | head -20
-          echo "--- WAR size: $(du -h "$OUT" | cut -f1) ---"
-          echo "DEPLOY_WAR=$OUT" >> "$GITHUB_ENV"
-
-
-
-- name: Ensure 7-Zip is installed
-        run: |
-          if ! command -v 7z >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y p7zip-full
+          if [ ! -f "Dockerfile" ]; then
+            echo "Error: Dockerfile not found in $(pwd)"
+            exit 1
           fi
-          7z --help | head -3
+
+          PY_VERSION=$(grep -oP 'python:\K[0-9]+(\.[0-9]+)+' Dockerfile | head -n1 | tr -d '[:space:]\r')
+
+          if [ -z "$PY_VERSION" ]; then
+            echo "Error: Could not extract Python version from Dockerfile"
+            exit 1
+          fi
+
+          echo "Detected python.version=$PY_VERSION"
+          echo "python=$PY_VERSION" >> "$GITHUB_OUTPUT"
