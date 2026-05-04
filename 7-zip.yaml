@@ -2,8 +2,6 @@
         id: extract-python
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          cat /etc/os-release
-
           if [ ! -f "Dockerfile" ]; then
             echo "Error: Dockerfile not found in $(pwd)"
             exit 1
@@ -18,3 +16,13 @@
 
           echo "Detected python.version=$PY_VERSION"
           echo "python=$PY_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.extract-python.outputs.python }}
+          cache: 'pip'
+          check-latest: false
+        env:
+          # If your runner is whitelisted, this lets setup-python download via proxy
+          AGENT_TOOLSDIRECTORY: /opt/hostedtoolcache
