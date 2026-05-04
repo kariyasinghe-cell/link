@@ -1,9 +1,22 @@
-- name: Create Virtual Environment
+  build-and-test:
+    name: Build and Test
+    needs: detect
+    runs-on: [self-hosted, linux]
+    container:
+      image: ${{ needs.detect.outputs.python-image }}
+      options: --volume ${{ inputs.workspace-path }}:/workspace
+      env:
+        HTTP_PROXY:    http://192.168.5.60:8080
+        HTTPS_PROXY:   http://192.168.5.60:8080
+        NO_PROXY:      localhost,127.0.0.1,.sampath.int
+        PIP_PROXY:     http://192.168.5.60:8080
+        PIP_INDEX_URL: https://pypi.org/simple
+    env:
+      WORKSPACE: /workspace          # path INSIDE the container
+    outputs:
+      python-version: ${{ needs.detect.outputs.python-version }}
+    steps:
+      - name: Verify Python Version
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          python -m venv .venv
-          # shellcheck disable=SC1091
-          . .venv/bin/activate
-          python -m pip install --upgrade pip --proxy "$PIP_PROXY"
-          echo "VIRTUAL_ENV=$(pwd)/.venv" >> "$GITHUB_ENV"
-          echo "$(pwd)/.venv/bin" >> "$GITHUB_PATH"
+          python --version
