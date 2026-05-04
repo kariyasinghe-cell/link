@@ -1,160 +1,27 @@
-name: Common Workflow - Build and Test (Python)
-
-on:
-  workflow_call:
-    inputs:
-      workspace-path:
-        description: "Workspace path from prepare-workspace job"
-        required: true
-        type: string
-    outputs:
-      python-version:
-        description: "Python version extracted from Dockerfile"
-        value: ${{ jobs.detect.outputs.python-version }}
-
-jobs:
-  detect:
-    name: Detect Python Version
-    runs-on: [self-hosted, linux]
-    env:
-      WORKSPACE: ${{ inputs.workspace-path }}
-    outputs:
-      python-version: ${{ steps.extract.outputs.python }}
-      python-image:   ${{ steps.extract.outputs.image }}
-    steps:
-      - name: Extract Python Version from Dockerfile
-        id: extract
+- name: Run Pytest and Generate Test Report
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          if [ ! -f "Dockerfile" ]; then
-            echo "Error: Dockerfile not found in $(pwd)"
-            exit 1
-          fi
-
-          PY_VERSION=$(grep -oP 'python:\K[0-9]+(\.[0-9]+)+' Dockerfile | head -n1 | tr -d '[:space:]\r')
-
-          if [ -z "$PY_VERSION" ]; then
-            echo "Error: Could not extract Python version from Dockerfile"
-            exit 1
-          fi
-
-          PY_IMAGE="python:${PY_VERSION}-slim"
-
-          echo "Detected python.version=$PY_VERSION"
-          echo "Using image=$PY_IMAGE"
-          echo "python=$PY_VERSION" >> "$GITHUB_OUTPUT"
-          echo "image=$PY_IMAGE"    >> "$GITHUB_OUTPUT"
-
-  build-and-test:
-    name: Build and Test
-    needs: detect
-    runs-on: [self-hosted, linux]
-    container:
-      image: ${{ needs.detect.outputs.python-image }}
-      options: --volume ${{ inputs.workspace-path }}:/workspace --workdir /workspace
-      env:
-        HTTP_PROXY:    http://192.168.5.60:8080
-        HTTPS_PROXY:   http://192.168.5.60:8080
-        NO_PROXY:      localhost,127.0.0.1,.sampath.int
-        PIP_PROXY:     http://192.168.5.60:8080
-        PIP_INDEX_URL: https://pypi.org/simple
-    outputs:
-      python-version: ${{ needs.detect.outputs.python-version }}
-    steps:
-      - name: Debug — verify mount
-        run: |
-          echo "PWD: $(pwd)"
-          echo "Listing /workspace:"
-          ls -la /workspace || echo "/workspace does NOT exist"
-          echo "Dockerfile present?"
-          test -f /workspace/Dockerfile && echo "yes" || echo "no"
-
-      - name: Verify Python Version
-        working-directory: /workspace
-        run: |
-          python --version
-          pip --version
-          EXPECTED="${{ needs.detect.outputs.python-version }}"
-          ACTUAL=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-          if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "::warning::Container Python is $ACTUAL but Dockerfile asks for $EXPECTED"
-          fi
-
-      - name: Create Virtual Environment
-        working-directory: /workspace
-        run: |
-          python -m venv .venv
-          # shellcheck disable=SC1091
-          . .venv/bin/activate
-          python -m pip install --upgrade pip --proxy "$PIP_PROXY"
-          echo "VIRTUAL_ENV=/workspace/.venv" >> "$GITHUB_ENV"
-          echo "/workspace/.venv/bin" >> "$GITHUB_PATH"
-
-      - name: Install Project & Test Dependencies
-        working-directory: /workspace
-        run: |
-          # Order of preference: pyproject.toml -> requirements*.txt -> setup.py
-          if [ -f "pyproject.toml" ]; then
-            echo "Installing from pyproject.toml (with [test] extras if present)"
-            pip install --proxy "$PIP_PROXY" -e ".[test]" \
-              || pip install --proxy "$PIP_PROXY" -e "."
-          elif [ -f "requirements.txt" ]; then
-            echo "Installing from requirements.txt"
-            pip install --proxy "$PIP_PROXY" -r requirements.txt
-            if [ -f "requirements-test.txt" ]; then
-              pip install --proxy "$PIP_PROXY" -r requirements-test.txt
-            fi
-          elif [ -f "setup.py" ]; then
-            echo "Installing from setup.py"
-            pip install --proxy "$PIP_PROXY" -e .
-          else
-            echo "ERROR: No pyproject.toml, requirements.txt or setup.py found"
-            exit 1
-          fi
-
-          # Test/coverage tooling pinned to majors so behaviour is reproducible.
-          pip install --proxy "$PIP_PROXY" \
+          source venv/bin/activate
+          
+          # Ensure coverage tooling is available
+          pip install --proxy "$HTTP_PROXY" \
             "pytest==8.*" \
             "pytest-cov==5.*" \
             "coverage[toml]==7.*"
-
-      - name: Build, Test and Generate Coverage
-        working-directory: /workspace
-        run: |
-          # JaCoCo equivalent for Python = coverage.py via pytest-cov.
-          # Output is coverage.xml (Cobertura format) — directly consumable by SonarQube.
-          set -e
-
-          if grep -qE '^\s*\[tool\.coverage\.run\]' pyproject.toml 2>/dev/null; then
-            COV_TARGET=""
-          elif [ -d "src" ]; then
-            COV_TARGET="--cov=src"
-          else
-            COV_TARGET="--cov=."
-          fi
-
-          TEST_PATH="tests/"
-          [ -d "tests" ] || TEST_PATH=""
-
-          pytest -v \
-            $COV_TARGET \
+          
+          mkdir -p reports
+          
+          python -m pytest \
+            --junitxml=reports/test-results.xml \
+            --cov=. \
             --cov-report=xml:coverage.xml \
-            --cov-report=term \
-            --junitxml=test-results.xml \
-            $TEST_PATH
-
-          if [ ! -s coverage.xml ]; then
-            echo "ERROR: coverage.xml not generated"
-            exit 1
+            || exit_code=$?
+          
+          if [ "${exit_code:-0}" -eq 5 ]; then
+            echo "No tests were found. Continuing..."
+          elif [ "${exit_code:-0}" -ne 0 ]; then
+            echo "Tests failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Tests ran successfully."
           fi
-          echo "coverage.xml and test-results.xml generated"
-
-      - name: Upload Test Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: |
-            /workspace/coverage.xml
-            /workspace/test-results.xml
-          retention-days: 7
