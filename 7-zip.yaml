@@ -1,28 +1,25 @@
-- name: Extract Python Version from Dockerfile
-        id: extract-python
+- name: Set up Python (system)
+        id: setup-python
+        run: |
+          PY_VERSION="${{ steps.extract-python.outputs.python }}"
+          PY_BIN="python${PY_VERSION}"
+
+          if ! command -v "$PY_BIN" >/dev/null 2>&1; then
+            echo "::error::$PY_BIN not installed on runner. Run: sudo dnf install -y python${PY_VERSION} python${PY_VERSION}-devel"
+            exit 1
+          fi
+
+          INSTALLED=$("$PY_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          echo "Using $PY_BIN (Python $INSTALLED)"
+          echo "python-bin=$PY_BIN" >> "$GITHUB_OUTPUT"
+
+
+
+- name: Create Virtual Environment
         working-directory: ${{ env.WORKSPACE }}
         run: |
-          if [ ! -f "Dockerfile" ]; then
-            echo "Error: Dockerfile not found in $(pwd)"
-            exit 1
-          fi
-
-          PY_VERSION=$(grep -oP 'python:\K[0-9]+(\.[0-9]+)+' Dockerfile | head -n1 | tr -d '[:space:]\r')
-
-          if [ -z "$PY_VERSION" ]; then
-            echo "Error: Could not extract Python version from Dockerfile"
-            exit 1
-          fi
-
-          echo "Detected python.version=$PY_VERSION"
-          echo "python=$PY_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ steps.extract-python.outputs.python }}
-          cache: 'pip'
-          check-latest: false
-        env:
-          # If your runner is whitelisted, this lets setup-python download via proxy
-          AGENT_TOOLSDIRECTORY: /opt/hostedtoolcache
+          ${{ steps.setup-python.outputs.python-bin }} -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip --proxy "$PIP_PROXY"
+          echo "VIRTUAL_ENV=$(pwd)/.venv" >> $GITHUB_ENV
+          echo "$(pwd)/.venv/bin" >> $GITHUB_PATH
