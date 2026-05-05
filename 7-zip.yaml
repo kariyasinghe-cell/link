@@ -1,141 +1,34 @@
-name: SonarQube Quality Gate Check (Python)
-
-on:
-  workflow_call:
-    inputs:
-      workspace-path:
-        description: "Workspace path prepared by parent workflow"
-        required: true
-        type: string
-    secrets:
-      SONAR_QUBE_TOKEN:
-        description: "SonarQube authentication token"
-        required: true
-
-permissions:
-  contents: read
-
-jobs:
-  sonarqube-quality-gate-check:
-    name: SonarQube Quality Check
-    runs-on: [self-hosted, linux]
-    env:
-      WORKSPACE: ${{ inputs.workspace-path }}
-      SONAR_HOST_URL: http://192.168.129.211:9999
-      SONAR_SCANNER_VERSION: "5.0.1.3006"
-      HTTP_PROXY: http://192.168.5.60:8080
-      HTTPS_PROXY: http://192.168.5.60:8080
-      NO_PROXY: localhost,127.0.0.1,192.168.129.211
-    steps:
-      - name: Verify Workspace and Reports
+- name: Artifact Build (Docker)
         working-directory: ${{ env.WORKSPACE }}
+        env:
+          HTTP_PROXY:  http://192.168.5.60:8080
+          HTTPS_PROXY: http://192.168.5.60:8080
+          NO_PROXY:    localhost,127.0.0.1,.sampath.int,harborrepo.sampath.int
         run: |
-          echo "Workspace: $(pwd)"
-          ls -la
-          
-          if [ ! -f "coverage.xml" ]; then
-            echo "::warning::coverage.xml not found from build-and-test job. Re-running pytest."
-            REGEN=1
+          success=0
+          for i in {1..4}; do
+            echo "Attempt $i: building image..."
+            if docker build --no-cache \
+                 --build-arg HTTP_PROXY="$HTTP_PROXY" \
+                 --build-arg HTTPS_PROXY="$HTTPS_PROXY" \
+                 --build-arg NO_PROXY="$NO_PROXY" \
+                 -t "${{ env.IMAGE_NAME }}" .; then
+              success=1
+              break
+            else
+              echo "Build failed on attempt $i, retrying in 5s..."
+              sleep 5
+            fi
+          done
+     
+          if [ $success -ne 1 ]; then
+            echo "ERROR: Docker build failed after 4 attempts"
+            exit 1
           fi
-          if [ ! -f "test-results.xml" ] && [ ! -f "reports/test-results.xml" ]; then
-            echo "::warning::test-results.xml not found from build-and-test job. Re-running pytest."
-            REGEN=1
+     
+          if ! docker image inspect "${{ env.IMAGE_NAME }}" > /dev/null 2>&1; then
+            echo "ERROR: Image ${{ env.IMAGE_NAME }} not found. Build failed"
+            exit 1
           fi
-          echo "REGEN=${REGEN:-0}" >> "$GITHUB_ENV"
-
-      - name: Re-generate Reports (fallback only)
-        if: env.REGEN == '1'
-        working-directory: ${{ env.WORKSPACE }}
-        run: |
-          python3 -m venv venv
-          # shellcheck disable=SC1091
-          . venv/bin/activate
-          
-          python -m pip install --upgrade pip --proxy "$HTTP_PROXY"
-          
-          if [ -f "requirements.txt" ]; then
-            pip install --proxy "$HTTP_PROXY" -r requirements.txt
-          fi
-          
-          pip install --proxy "$HTTP_PROXY" \
-            "pytest==8.*" "pytest-cov==5.*" "coverage[toml]==7.*"
-          
-          mkdir -p reports
-          set +e
-          python -m pytest \
-            --junitxml=reports/test-results.xml \
-            --cov=app \
-            --cov-report=xml:coverage.xml
-          PYTEST_EXIT=$?
-          set -e
-          
-          if [ $PYTEST_EXIT -eq 5 ]; then
-            echo "::warning::No tests collected"
-          elif [ $PYTEST_EXIT -ne 0 ]; then
-            echo "Tests failed with exit code $PYTEST_EXIT"
-            exit $PYTEST_EXIT
-          fi
-
-      - name: Normalise Test Report Path
-        working-directory: ${{ env.WORKSPACE }}
-        run: |
-          # SonarScanner config below points at reports/test-results.xml
-          if [ -f "test-results.xml" ] && [ ! -f "reports/test-results.xml" ]; then
-            mkdir -p reports
-            cp test-results.xml reports/test-results.xml
-          fi
-          ls -la coverage.xml reports/test-results.xml
-
-      - name: Install SonarScanner (if not installed)
-        run: |
-          if ! command -v sonar-scanner >/dev/null 2>&1; then
-            echo "Installing SonarScanner $SONAR_SCANNER_VERSION"
-            cd /tmp
-            rm -rf sonar-scanner sonar-scanner-cli-*.zip
-            wget -q "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip"
-            unzip -q -o "sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip"
-            rm "sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip"
-            mv "sonar-scanner-${SONAR_SCANNER_VERSION}-linux" sonar-scanner
-            echo "/tmp/sonar-scanner/bin" >> "$GITHUB_PATH"
-          else
-            echo "SonarScanner already installed: $(sonar-scanner --version | head -n1)"
-          fi
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: SonarQube Scan
-        working-directory: ${{ env.WORKSPACE }}
-        run: |
-          repositoryName=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2)
-          export SONAR_PROJECT_KEY=$repositoryName
-          echo "Sonar Project Key: $SONAR_PROJECT_KEY"
-
-          sonar-scanner \
-            -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
-            -Dsonar.projectName="$SONAR_PROJECT_KEY" \
-            -Dsonar.sources="app" \
-            -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.token="${{ secrets.SONAR_QUBE_TOKEN }}" \
-            -Dsonar.python.version=3.12 \
-            -Dsonar.python.coverage.reportPaths="coverage.xml" \
-            -Dsonar.junit.reportPaths="reports/test-results.xml" \
-            -Dsonar.exclusions='**/.venv/**,**/venv/**,**/tests/**,**/__pycache__/**' \
-            -Dhttp.proxyHost="192.168.5.60" -Dhttp.proxyPort="8080" \
-            -Dhttps.proxyHost="192.168.5.60" -Dhttps.proxyPort="8080" \
-            -Dhttp.nonProxyHosts="localhost|127.0.0.1|192.168.129.211" \
-            -Dhttps.nonProxyHosts="localhost|127.0.0.1|192.168.129.211" \
-            -Dsonar.scm.provider="git" \
-            -Dsonar.scm.forceReloadAll="true"
-
-      - name: Cleanup venv (if created)
-        if: always()
-        working-directory: ${{ env.WORKSPACE }}
-        run: |
-          if [ -d "venv" ]; then
-            rm -rf venv
-            echo "Removed venv directory"
-          fi
+     
+          echo "Docker image ${{ env.IMAGE_NAME }} built successfully."
