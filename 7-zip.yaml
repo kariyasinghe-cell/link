@@ -1,3 +1,26 @@
+build-and-test:
+    name: Build and Test
+    needs: detect
+    runs-on: [self-hosted, linux]
+    container:
+      image: ${{ needs.detect.outputs.python-image }}
+      options: >-
+        --volume ${{ inputs.workspace-path }}:/workspace
+        --workdir /workspace
+        --user 1000:1000
+      env:
+        HTTP_PROXY:    http://192.168.5.60:8080
+        HTTPS_PROXY:   http://192.168.5.60:8080
+        NO_PROXY:      localhost,127.0.0.1,.sampath.int
+        PIP_PROXY:     http://192.168.5.60:8080
+        PIP_INDEX_URL: https://pypi.org/simple
+        HOME:          /tmp
+    outputs:
+      python-version: ${{ needs.detect.outputs.python-version }}
+
+
+
+
 - name: Artifact Build (Docker)
         working-directory: ${{ env.WORKSPACE }}
         env:
