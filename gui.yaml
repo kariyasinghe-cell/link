@@ -23,6 +23,165 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Set up Maven 3.6.3
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://archive.apache.org/dist/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip -OutFile maven.zip
+          Expand-Archive -Path maven.zip -DestinationPath $env:USERPROFILE\maven
+          echo "$env:USERPROFILE\maven\apache-maven-3.6.3\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Verify build environment
+        shell: pwsh
+        run: |
+          Write-Host "=== Java ==="
+          java -version
+          Write-Host "`n=== Maven ==="
+          mvn -version
+          Write-Host "`n=== Working directory ==="
+          Get-Location
+
+      - name: Detect Chrome version
+        id: chrome
+        shell: pwsh
+        run: |
+          $chromeExe = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          if (-Not (Test-Path $chromeExe)) {
+            $chromeExe = "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+          }
+          if (-Not (Test-Path $chromeExe)) {
+            throw "Chrome not found in standard locations"
+          }
+          $version = (Get-Item $chromeExe).VersionInfo.ProductVersion
+          Write-Host "Chrome version: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download matching ChromeDriver
+        shell: pwsh
+        run: |
+          $chromeVersion = "${{ steps.chrome.outputs.version }}"
+          Write-Host "Looking up chromedriver for Chrome $chromeVersion"
+
+          $endpoints = Invoke-RestMethod -Uri "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
+
+          # Try exact match first
+          $match = $endpoints.versions | Where-Object { $_.version -eq $chromeVersion } | Select-Object -First 1
+
+          # Fall back to latest of same major version
+          if (-Not $match) {
+            $major = $chromeVersion.Split('.')[0]
+            Write-Host "No exact match. Falling back to latest $major.x"
+            $match = $endpoints.versions | Where-Object { $_.version.StartsWith("$major.") } | Select-Object -Last 1
+          }
+
+          if (-Not $match) {
+            throw "Could not find a chromedriver build matching Chrome $chromeVersion"
+          }
+
+          $url = ($match.downloads.chromedriver | Where-Object { $_.platform -eq "win64" }).url
+          Write-Host "Matched chromedriver version: $($match.version)"
+          Write-Host "Download URL: $url"
+
+          Invoke-WebRequest -Uri $url -OutFile chromedriver.zip
+          Expand-Archive -Path chromedriver.zip -DestinationPath driver-tmp -Force
+
+          $targetDir = "src\test\resources\webDrivers"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          Copy-Item driver-tmp\chromedriver-win64\chromedriver.exe "$targetDir\chromedriver.exe" -Force
+
+          Write-Host "`nPlaced chromedriver at:"
+          Get-Item "$targetDir\chromedriver.exe" | Select-Object FullName, Length
+
+      - name: Verify test resources
+        shell: pwsh
+        run: |
+          Write-Host "=== TEST_DATA ==="
+          Get-ChildItem src\test\resources\TEST_DATA -ErrorAction SilentlyContinue
+          Write-Host "`n=== webDrivers ==="
+          Get-ChildItem src\test\resources\webDrivers -ErrorAction SilentlyContinue
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          $suite = if ("${{ github.event.inputs.suite }}") { "${{ github.event.inputs.suite }}" } else { "gui-full.xml" }
+          Write-Host "Running suite: $suite"
+          mvn -B -ntp clean test "-DsuiteXmlFile=$suite" "-Dheadless=true"
+
+      - name: Upload Surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: |
+            target/surefire-reports/**
+            target/**/*.png
+          retention-days: 14
+
+      - name: Upload Extent / custom reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extent-reports
+          path: |
+            test-output/**
+            reports/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+name: Sampath SVR4 GUI Automation CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'XML suite to run'
+        required: true
+        default: 'gui-full.xml'
+        type: choice
+        options:
+          - gui-full.xml
+          - gui-R1_1.xml
+          - gui-R1_2.xml
+          - gui-R2.xml
+          - gui-R3.xml
+  schedule:
+    - cron: '0 18 * * *'
+  push:
+    branches:
+      - 'guiTestCIWorkflow'
+
+jobs:
+  test:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
